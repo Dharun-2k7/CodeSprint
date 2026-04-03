@@ -41,8 +41,51 @@
                             <label for="login-password" class="form-label">Password</label>
                             <input type="password" class="form-control" id="login-password" required>
                         </div>
-                        <button type="submit" class="btn btn-primary">Login</button>
+                        <button type="submit" class="btn btn-primary w-100 mb-2">Login</button>
+                        <div class="text-center">
+                            <a href="#" id="forgot-password-link" class="text-muted small">Forgot Password?</a>
+                        </div>
                     </form>
+                    <div id="login-2fa-section" style="display: none;" class="mt-3">
+                        <h5>Two-Factor Authentication</h5>
+                        <div class="mb-3">
+                            <label for="login-otp" class="form-label">Enter OTP</label>
+                            <input type="text" class="form-control" id="login-otp" placeholder="6-digit OTP" maxlength="6">
+                        </div>
+                        <button type="button" id="login-2fa-btn" class="btn btn-primary w-100">Verify OTP</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div id="forgot-password-view" style="display: none;">
+            <div class="row justify-content-center">
+                <div class="col-md-6">
+                    <h2>Forgot Password</h2>
+                    <form id="forgot-password-form">
+                        <div class="mb-3">
+                            <label for="forgot-email" class="form-label">Email</label>
+                            <input type="email" class="form-control" id="forgot-email" required>
+                        </div>
+                        <button type="submit" class="btn btn-primary w-100 mb-2">Send Reset OTP</button>
+                        <div class="text-center">
+                            <a href="#" id="back-to-login-link" class="text-muted small">Back to Login</a>
+                        </div>
+                    </form>
+                    <div id="reset-password-section" style="display: none;" class="mt-3">
+                        <h5>Reset Password</h5>
+                        <form id="reset-password-form">
+                            <div class="mb-3">
+                                <label for="reset-otp" class="form-label">OTP</label>
+                                <input type="text" class="form-control" id="reset-otp" placeholder="6-digit OTP" maxlength="6" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="reset-new-password" class="form-label">New Password</label>
+                                <input type="password" class="form-control" id="reset-new-password" required>
+                            </div>
+                            <button type="submit" class="btn btn-primary w-100">Reset Password</button>
+                        </form>
+                    </div>
                 </div>
             </div>
         </div>
@@ -71,15 +114,55 @@
         </div>
 
         <div id="contest-view" style="display: none;">
-            <h2 id="contest-title"></h2>
-            <div class="row">
-                <div class="col-md-8">
-                    <div id="problems-list"></div>
-                    <div id="problem-detail" style="display: none;"></div>
-                    <div id="submission-form" style="display: none;"></div>
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h2 id="contest-title"></h2>
+                <button id="back-to-contest-btn" class="btn btn-secondary" style="display: none;">Back to Problems</button>
+            </div>
+            <div id="contest-problems-view">
+                <div class="row">
+                    <div class="col-md-4">
+                        <div id="problems-list"></div>
+                    </div>
+                    <div class="col-md-8">
+                        <div class="alert alert-info">Select a problem to start coding</div>
+                    </div>
                 </div>
-                <div class="col-md-4">
-                    <div id="leaderboard"></div>
+                <div id="leaderboard" class="mt-4"></div>
+            </div>
+            <div id="problem-view" style="display: none;">
+                <div id="ide-container">
+                    <div class="row g-0" style="height: calc(100vh - 200px);">
+                        <div class="col-md-6 border-end" style="overflow-y: auto; max-height: 100%;">
+                            <div id="problem-panel" class="p-3">
+                                <h4 id="problem-title"></h4>
+                                <div id="problem-statement" class="problem-statement"></div>
+                                <div id="sample-testcases" class="mt-3"></div>
+                            </div>
+                        </div>
+                        <div class="col-md-6" style="display: flex; flex-direction: column; max-height: 100%;">
+                            <div id="code-panel" class="p-3" style="flex: 1; display: flex; flex-direction: column;">
+                                <div class="mb-3">
+                                    <label for="language-select" class="form-label">Language</label>
+                                    <select class="form-select" id="language-select">
+                                        <option value="c">C</option>
+                                        <option value="cpp">C++</option>
+                                        <option value="python3">Python 3</option>
+                                    </select>
+                                </div>
+                                <div id="monaco-editor" class="border" style="flex: 1; min-height: 260px;"></div>
+                                <!-- Hidden textarea used as a fallback and for compatibility -->
+                                <textarea id="code-editor" style="display: none;"></textarea>
+                                <div class="mt-3 d-flex gap-2">
+                                    <button id="run-btn" class="btn btn-warning">Run Sample</button>
+                                    <button id="submit-btn" class="btn btn-success">Submit</button>
+                                </div>
+                                <div id="run-output" class="mt-3" style="display: none;">
+                                    <h5>Run Output</h5>
+                                    <pre id="output-content" class="border p-2 bg-light" style="max-height: 200px; overflow-y: auto;"></pre>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -106,6 +189,10 @@
                         <input type="text" class="form-control" id="contest-title-input" required>
                     </div>
                     <div class="mb-3">
+                        <label for="contest-writer-name" class="form-label">Writer Name (optional)</label>
+                        <input type="text" class="form-control" id="contest-writer-name" placeholder="e.g., Codeforces-style writer name">
+                    </div>
+                    <div class="mb-3">
                         <label for="contest-start-time" class="form-label">Start Time</label>
                         <input type="datetime-local" class="form-control" id="contest-start-time" required>
                     </div>
@@ -115,6 +202,48 @@
                     </div>
                     <button type="submit" class="btn btn-primary">Create Contest</button>
                 </form>
+                
+                <hr class="my-4">
+                
+                <h3>Edit Contests</h3>
+                <div id="admin-contests-list" class="mb-4"></div>
+                
+                <div id="edit-contest-form-container" style="display: none;">
+                    <h4>Edit Contest</h4>
+                    <form id="edit-contest-form">
+                        <input type="hidden" id="edit-contest-id">
+                        <div class="mb-3">
+                            <label for="edit-contest-title" class="form-label">Title</label>
+                            <input type="text" class="form-control" id="edit-contest-title" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="edit-contest-writer-name" class="form-label">Writer Name</label>
+                            <input type="text" class="form-control" id="edit-contest-writer-name">
+                        </div>
+                        <div class="mb-3">
+                            <label for="edit-contest-start-time" class="form-label">Start Time</label>
+                            <input type="datetime-local" class="form-control" id="edit-contest-start-time" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="edit-contest-end-time" class="form-label">End Time</label>
+                            <input type="datetime-local" class="form-control" id="edit-contest-end-time" required>
+                        </div>
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="edit-contest-standings-frozen">
+                                <label class="form-check-label" for="edit-contest-standings-frozen">
+                                    Freeze Standings
+                                </label>
+                            </div>
+                        </div>
+                        <div class="mb-3" id="freeze-time-container" style="display: none;">
+                            <label for="edit-contest-freeze-time" class="form-label">Freeze Time</label>
+                            <input type="datetime-local" class="form-control" id="edit-contest-freeze-time">
+                        </div>
+                        <button type="submit" class="btn btn-success">Update Contest</button>
+                        <button type="button" class="btn btn-secondary" onclick="document.getElementById('edit-contest-form-container').style.display='none'">Cancel</button>
+                    </form>
+                </div>
             </div>
 
             <div id="admin-problems-tab" style="display: none;">
@@ -180,6 +309,7 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.50.0/min/vs/loader.min.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

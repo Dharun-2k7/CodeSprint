@@ -20,6 +20,12 @@ body {
 .problem-card {
     margin-bottom: 1rem;
     cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.problem-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
 }
 
 .problem-statement {
@@ -28,6 +34,18 @@ body {
     border-radius: 0.5rem;
     margin-bottom: 1rem;
     white-space: pre-wrap;
+    line-height: 1.6;
+    font-size: 15px;
+}
+
+#problem-panel {
+    background-color: #ffffff;
+    height: 100%;
+}
+
+#code-panel {
+    background-color: #f8f9fa;
+    height: 100%;
 }
 
 .code-editor {
@@ -35,6 +53,7 @@ body {
     min-height: 400px;
     font-family: 'Courier New', monospace;
     font-size: 14px;
+    tab-size: 4;
 }
 
 .leaderboard {

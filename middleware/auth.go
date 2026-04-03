@@ -1,48 +1,79 @@
 package middleware
 
 import (
-	"codesprint/utils"
+	"crypto/rand"
+	"errors"
 	"fmt"
-	"net/http"
-	"strings"
+	"math/big"
+	"os"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/crypto/bcrypt"
 )
 
-// AuthMiddleware validates JWT tokens
-func AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
-			http.Error(w, "Authorization header required", http.StatusUnauthorized)
-			return
-		}
+var jwtSecret = []byte(getJWTSecret())
 
-		parts := strings.Split(authHeader, " ")
-		if len(parts) != 2 || parts[0] != "Bearer" {
-			http.Error(w, "Invalid authorization header format", http.StatusUnauthorized)
-			return
-		}
-
-		token := parts[1]
-		userID, email, err := utils.ValidateJWT(token)
-		if err != nil {
-			http.Error(w, "Invalid token", http.StatusUnauthorized)
-			return
-		}
-
-		// Store user info in request context
-		r.Header.Set("X-User-ID", fmt.Sprintf("%d", userID))
-		r.Header.Set("X-User-Email", email)
-
-		next(w, r)
+func getJWTSecret() string {
+	secret := os.Getenv("JWT_SECRET")
+	if secret == "" {
+		return "your-secret-key-change-in-production"
 	}
+	return secret
 }
 
-// AdminMiddleware checks if user is admin (for MVP, we'll use created_by check)
-func AdminMiddleware(next http.HandlerFunc) http.HandlerFunc {
-	return AuthMiddleware(func(w http.ResponseWriter, r *http.Request) {
-		// For MVP, admin check can be done in handlers
-		// This middleware just ensures user is authenticated
-		next(w, r)
+// HashPassword hashes a password using bcrypt
+func HashPassword(password string) (string, error) {
+	bytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	return string(bytes), err
+}
+
+// CheckPasswordHash compares a password with a hash
+func CheckPasswordHash(password, hash string) bool {
+	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+	return err == nil
+}
+
+// GenerateJWT generates a JWT token for a user
+func GenerateJWT(userID int, email string) (string, error) {
+	claims := jwt.MapClaims{
+		"user_id": userID,
+		"email":   email,
+		"exp":     time.Now().Add(time.Hour * 24).Unix(),
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(jwtSecret)
+}
+
+// ValidateJWT validates a JWT token and returns the user ID
+func ValidateJWT(tokenString string) (int, string, error) {
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, errors.New("unexpected signing method")
+		}
+		return jwtSecret, nil
 	})
+
+	if err != nil {
+		return 0, "", err
+	}
+
+	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
+		userID := int(claims["user_id"].(float64))
+		email := claims["email"].(string)
+		return userID, email, nil
+	}
+
+	return 0, "", errors.New("invalid token")
 }
 
+// GenerateOTP generates a 6-digit OTP
+func GenerateOTP() (string, error) {
+	// Generate cryptographically secure random 6-digit number
+	n, err := rand.Int(rand.Reader, big.NewInt(900000))
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%06d", n.Int64()+100000), nil
+}

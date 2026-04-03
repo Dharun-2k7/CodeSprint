@@ -31,3 +31,6 @@ go.work
 # OS
 .DS_Store
 Thumbs.db
+
+# Documentation
+CHANGES.md

@@ -2,6 +2,7 @@ package judge
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,21 +10,45 @@ import (
 	"time"
 )
 
+const rapidAPIHost = "judge0-ce.p.rapidapi.com"
+
 var judge0URL = getJudge0URL()
 
 func getJudge0URL() string {
 	url := os.Getenv("JUDGE0_URL")
 	if url == "" {
-		return "http://localhost:2358"
+		return "https://judge0-ce.p.rapidapi.com"
 	}
 	return url
+}
+
+func rapidAPIKey() (string, error) {
+	key := os.Getenv("RAPIDAPI_KEY")
+	if key == "" {
+		return "", fmt.Errorf("RAPIDAPI_KEY is not set")
+	}
+	return key, nil
+}
+
+var httpClient = &http.Client{
+	Timeout: 30 * time.Second,
+}
+
+func applyRapidHeaders(req *http.Request) error {
+	key, err := rapidAPIKey()
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-RapidAPI-Key", key)
+	req.Header.Set("X-RapidAPI-Host", rapidAPIHost)
+	return nil
 }
 
 // Language IDs for Judge0
 const (
 	LanguageC      = 50 // C (GCC 9.2.0)
 	LanguageCPP    = 54 // C++ (GCC 9.2.0)
-	LanguagePython = 92 // Python (3.8.1)
+	LanguagePython = 71 // Python (3.8.1)
 )
 
 // Judge0Submission represents a submission to Judge0
@@ -63,11 +88,17 @@ func SubmitCode(code string, languageID int, input string) (*Judge0Response, err
 		return nil, fmt.Errorf("failed to marshal submission: %w", err)
 	}
 
-	resp, err := http.Post(
-		fmt.Sprintf("%s/submissions?base64_encoded=false&wait=false", judge0URL),
-		"application/json",
-		bytes.NewBuffer(jsonData),
-	)
+	url := fmt.Sprintf("%s/submissions?base64_encoded=false&wait=false", judge0URL)
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create submission request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if err := applyRapidHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to submit to Judge0: %w", err)
 	}
@@ -87,7 +118,16 @@ func SubmitCode(code string, languageID int, input string) (*Judge0Response, err
 
 // GetSubmissionResult retrieves the result of a submission from Judge0
 func GetSubmissionResult(token string) (*Judge0Response, error) {
-	resp, err := http.Get(fmt.Sprintf("%s/submissions/%s?base64_encoded=false", judge0URL, token))
+	url := fmt.Sprintf("%s/submissions/%s?base64_encoded=false", judge0URL, token)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create result request: %w", err)
+	}
+	if err := applyRapidHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get result from Judge0: %w", err)
 	}
@@ -107,7 +147,16 @@ func GetSubmissionResult(token string) (*Judge0Response, error) {
 
 // PollSubmissionResult polls Judge0 until the submission is complete
 func PollSubmissionResult(token string, maxAttempts int, delay time.Duration) (*Judge0Response, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(maxAttempts)*delay)
+	defer cancel()
+
 	for i := 0; i < maxAttempts; i++ {
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("submission timed out after %d attempts: %w", maxAttempts, ctx.Err())
+		default:
+		}
+
 		result, err := GetSubmissionResult(token)
 		if err != nil {
 			return nil, err
@@ -118,7 +167,13 @@ func PollSubmissionResult(token string, maxAttempts int, delay time.Duration) (*
 			return result, nil
 		}
 
-		time.Sleep(delay)
+		t := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return nil, fmt.Errorf("submission timed out after %d attempts: %w", maxAttempts, ctx.Err())
+		case <-t.C:
+		}
 	}
 
 	return nil, fmt.Errorf("submission timed out after %d attempts", maxAttempts)
@@ -146,6 +201,21 @@ func MapJudge0StatusToInternal(judge0StatusID int) string {
 
 // GetLanguageID maps language string to Judge0 language ID
 func GetLanguageID(language string) int {
+	switch language {
+	case "c", "C":
+		return LanguageC
+	}
+
+	// Tolerant mapping for frontend values like `python3`, `c++`.
+	switch language {
+	case "cpp", "c++", "C++", "CXX":
+		return LanguageCPP
+	case "python", "python3", "Python", "PYTHON3":
+		return LanguagePython
+	case "c", "C":
+		return LanguageC
+	}
+
 	switch language {
 	case "c":
 		return LanguageC

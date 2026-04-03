@@ -4,6 +4,7 @@ import (
 	"codesprint/database"
 	"codesprint/judge"
 	"codesprint/models"
+	"codesprint/services"
 	"codesprint/utils"
 	"encoding/json"
 	"fmt"
@@ -14,87 +15,102 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// SubmitCode handles code submission
-func SubmitCode(w http.ResponseWriter, r *http.Request) {
+// RunCode handles running code against sample testcases
+func RunCode(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "Method not allowed"})
 		return
 	}
 
 	userID := utils.GetUserIDFromRequest(r)
 	if userID == 0 {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "Unauthorized"})
 		return
 	}
 
-	var req models.SubmitCodeRequest
+	var req models.RunCodeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "Invalid request body"})
 		return
 	}
 
 	// Validate input
 	if req.Code == "" || req.Language == "" {
-		http.Error(w, "Code and language are required", http.StatusBadRequest)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "Code and language are required"})
 		return
 	}
 
-	// Get problem to check time limit
-	var problem models.Problem
-	err := database.DB.QueryRow(
-		"SELECT id, contest_id, title, time_limit, memory_limit FROM problems WHERE id = $1",
-		req.ProblemID,
-	).Scan(&problem.ID, &problem.ContestID, &problem.Title, &problem.TimeLimit, &problem.MemoryLimit)
+	runRes, err := services.RunSamples(req.ProblemID, req.Language, req.Code)
 	if err != nil {
-		http.Error(w, "Problem not found", http.StatusNotFound)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": err.Error()})
 		return
 	}
-
-	// Get all testcases for the problem
-	rows, err := database.DB.Query(
-		"SELECT id, input, expected_output FROM testcases WHERE problem_id = $1",
-		req.ProblemID,
-	)
-	if err != nil {
-		http.Error(w, "Failed to fetch testcases", http.StatusInternalServerError)
-		return
-	}
-	defer rows.Close()
-
-	var testcases []models.Testcase
-	for rows.Next() {
-		var tc models.Testcase
-		err := rows.Scan(&tc.ID, &tc.Input, &tc.ExpectedOutput)
-		if err != nil {
-			continue
-		}
-		testcases = append(testcases, tc)
-	}
-
-	if len(testcases) == 0 {
-		http.Error(w, "No testcases found for this problem", http.StatusBadRequest)
-		return
-	}
-
-	// Create submission record
-	var submissionID int
-	err = database.DB.QueryRow(
-		"INSERT INTO submissions (user_id, problem_id, contest_id, language, code, status) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
-		userID, req.ProblemID, req.ContestID, req.Language, req.Code, "pending",
-	).Scan(&submissionID)
-	if err != nil {
-		http.Error(w, "Failed to create submission", http.StatusInternalServerError)
-		return
-	}
-
-	// Process submission asynchronously
-	go processSubmission(submissionID, req.Code, req.Language, testcases, problem.TimeLimit)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"submission_id": submissionID,
-		"status":        "pending",
-	})
+	json.NewEncoder(w).Encode(runRes)
+}
+
+// SubmitCode handles code submission
+func SubmitCode(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "Method not allowed"})
+		return
+	}
+
+	userID := utils.GetUserIDFromRequest(r)
+	if userID == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "Unauthorized"})
+		return
+	}
+
+	var req models.SubmitCodeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "Invalid request body"})
+		return
+	}
+
+	// Validate input
+	if req.Code == "" || req.Language == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "Code and language are required"})
+		return
+	}
+
+	if req.ProblemID == 0 || req.ContestID == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "problem_id and contest_id are required"})
+		return
+	}
+
+	subRes, err := services.SubmitAndJudge(userID, req.ProblemID, req.ContestID, req.Language, req.Code)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		// Service failures could be judge issues or DB issues; treat as 500 unless it's clearly a bad request.
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(subRes)
 }
 
 // processSubmission processes a submission against all testcases
@@ -126,9 +142,14 @@ func processSubmission(submissionID int, code, language string, testcases []mode
 			break
 		}
 
-		if pollResult != nil && pollResult.Status != nil {
-			fmt.Printf("submission %d: token=%s status=%d (%s)\n", submissionID, result.Token, pollResult.Status.ID, pollResult.Status.Description)
+		if pollResult == nil || pollResult.Status == nil {
+			fmt.Printf("submission %d: token=%s pollResult is nil or has no status\n", submissionID, result.Token)
+			finalStatus = "runtime_error"
+			allPassed = false
+			break
 		}
+
+		fmt.Printf("submission %d: token=%s status=%d (%s)\n", submissionID, result.Token, pollResult.Status.ID, pollResult.Status.Description)
 
 		// Parse runtime
 		if pollResult.Time != "" {
@@ -211,7 +232,9 @@ func trimWhitespace(s string) string {
 // GetSubmission returns a submission by ID
 func GetSubmission(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "Method not allowed"})
 		return
 	}
 
@@ -223,7 +246,9 @@ func GetSubmission(w http.ResponseWriter, r *http.Request) {
 	}
 	submissionID, err := strconv.Atoi(submissionIDStr)
 	if err != nil {
-		http.Error(w, "Invalid submission ID", http.StatusBadRequest)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "Invalid submission ID"})
 		return
 	}
 
@@ -233,7 +258,9 @@ func GetSubmission(w http.ResponseWriter, r *http.Request) {
 		submissionID,
 	).Scan(&submission.ID, &submission.UserID, &submission.ProblemID, &submission.ContestID, &submission.Language, &submission.Code, &submission.Status, &submission.Score, &submission.Runtime, &submission.CreatedAt)
 	if err != nil {
-		http.Error(w, "Submission not found", http.StatusNotFound)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "Submission not found"})
 		return
 	}
 
@@ -244,20 +271,26 @@ func GetSubmission(w http.ResponseWriter, r *http.Request) {
 // GetUserSubmissions returns all submissions for a user in a contest
 func GetUserSubmissions(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "Method not allowed"})
 		return
 	}
 
 	userID := utils.GetUserIDFromRequest(r)
 	if userID == 0 {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "Unauthorized"})
 		return
 	}
 
 	contestIDStr := r.URL.Query().Get("contest_id")
 	contestID, err := strconv.Atoi(contestIDStr)
 	if err != nil {
-		http.Error(w, "Invalid contest ID", http.StatusBadRequest)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "Invalid contest ID"})
 		return
 	}
 
@@ -266,7 +299,9 @@ func GetUserSubmissions(w http.ResponseWriter, r *http.Request) {
 		userID, contestID,
 	)
 	if err != nil {
-		http.Error(w, "Failed to fetch submissions", http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "Failed to fetch submissions"})
 		return
 	}
 	defer rows.Close()

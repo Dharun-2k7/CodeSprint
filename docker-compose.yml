@@ -18,42 +18,6 @@ services:
       timeout: 5s
       retries: 5
 
-  judge0:
-    image: judge0/judge0:1.13.0
-    container_name: codesprint_judge0
-    ports:
-      - "2358:2358"
-    environment:
-      - REDIS_HOST=judge0_redis
-      - POSTGRES_HOST=judge0_db
-      - POSTGRES_PORT=5432
-      - POSTGRES_USER=judge0
-      - POSTGRES_PASSWORD=judge0
-      - POSTGRES_DB=judge0
-      - RAILS_MAX_THREADS=5
-      - WORKERS=2
-    depends_on:
-      - judge0_db
-      - judge0_redis
-    volumes:
-      - judge0_data:/judge0
-
-  judge0_db:
-    image: postgres:15-alpine
-    container_name: codesprint_judge0_db
-    environment:
-      POSTGRES_USER: judge0
-      POSTGRES_PASSWORD: judge0
-      POSTGRES_DB: judge0
-    volumes:
-      - judge0_db_data:/var/lib/postgresql/data
-
-  judge0_redis:
-    image: redis:7-alpine
-    container_name: codesprint_judge0_redis
-    volumes:
-      - judge0_redis_data:/data
-
   backend:
     build:
       context: .
@@ -68,16 +32,12 @@ services:
       - DB_PASSWORD=codesprint123
       - DB_NAME=codesprint
       - JWT_SECRET=your-secret-key-change-in-production
-      - JUDGE0_URL=http://judge0:2358
+      - JUDGE0_URL=https://judge0-ce.p.rapidapi.com
+      - RAPIDAPI_KEY=your_rapidapi_key_here
     depends_on:
       postgres:
         condition: service_healthy
-      judge0:
-        condition: service_started
 
 volumes:
   postgres_data:
-  judge0_data:
-  judge0_db_data:
-  judge0_redis_data:
 

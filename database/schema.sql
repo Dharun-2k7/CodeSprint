@@ -1,4 +1,4 @@
--- Database schema for Codesprint MVP
+-- Database schema for Codesprint 
 
 -- Users table
 CREATE TABLE IF NOT EXISTS users (
