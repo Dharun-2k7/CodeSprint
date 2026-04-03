@@ -22,38 +22,10 @@ var schemaSQL string
 //go:embed migrations.sql
 var migrationsSQL string
 
-// InitDB initializes the database connection
 func InitDB() error {
-	// Preferred: Neon/managed Postgres via connection string.
-	// Example: postgres://user:pass@host:5432/dbname?sslmode=require
 	connStr := os.Getenv("DB_URL")
-
-	// Back-compat: allow legacy envs when DB_URL isn't provided.
 	if connStr == "" {
-		host := os.Getenv("DB_HOST")
-		if host == "" {
-			host = "localhost"
-		}
-		port := os.Getenv("DB_PORT")
-		if port == "" {
-			port = "5432"
-		}
-		user := os.Getenv("DB_USER")
-		if user == "" {
-			user = "codesprint"
-		}
-		password := os.Getenv("DB_PASSWORD")
-		if password == "" {
-			password = "codesprint123"
-		}
-		dbname := os.Getenv("DB_NAME")
-		if dbname == "" {
-			dbname = "codesprint"
-		}
-
-		// For local Postgres it's fine to disable SSL; managed Postgres should use DB_URL.
-		connStr = fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-			host, port, user, password, dbname)
+		return fmt.Errorf("DB_URL environment variable is required")
 	}
 
 	var err error

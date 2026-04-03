@@ -2,31 +2,28 @@ package services
 
 import (
 	"codesprint/database"
-	"codesprint/judge"
 	"codesprint/models"
 	"fmt"
-	"time"
 )
 
 type TestExecutionResult struct {
 	TestcaseID int    `json:"testcase_id"`
-	Status      string `json:"status"` // accepted / wrong_answer / time_limit_exceeded
-	Stdout      string `json:"stdout"`
-	Expected    string `json:"expected"`
-	Matches     bool   `json:"matches"`
-	RuntimeMS   int    `json:"runtime_ms"`
+	Status     string `json:"status"` // accepted / wrong_answer / time_limit_exceeded (re-mapped to runtime_error for piston timeout)
+	Stdout     string `json:"stdout"`
+	Expected   string `json:"expected"`
+	Matches    bool   `json:"matches"`
+	RuntimeMS  int    `json:"runtime_ms"`
 }
 
 type RunResult struct {
-	Success      bool                   `json:"success"`
-	Verdict      string                 `json:"verdict"` // AC / WA / TLE
-	RuntimeMS    int                    `json:"runtime_ms"`
-	TestResults  []TestExecutionResult `json:"test_results"`
-	SampleCount  int                    `json:"sample_count"`
+	Success     bool                  `json:"success"`
+	Verdict     string                `json:"verdict"` // AC / WA / RE
+	RuntimeMS   int                   `json:"runtime_ms"`
+	TestResults []TestExecutionResult `json:"test_results"`
+	SampleCount int                   `json:"sample_count"`
 }
 
 func RunSamples(problemID int, language string, code string) (*RunResult, error) {
-	// Fetch sample testcases
 	rows, err := database.DB.Query(
 		"SELECT id, input, expected_output FROM testcases WHERE problem_id = $1 AND is_sample = true ORDER BY id",
 		problemID,
@@ -49,92 +46,67 @@ func RunSamples(problemID int, language string, code string) (*RunResult, error)
 		return nil, fmt.Errorf("no sample testcases found")
 	}
 
-	languageID := judge.GetLanguageID(language)
-
 	results := make([]TestExecutionResult, 0, len(testcases))
 	overallVerdict := "AC"
-	runtimeMS := 0
+	maxRuntimeMS := 0
 
 	for _, tc := range testcases {
-		result, err := judge.SubmitCode(code, languageID, tc.Input)
+		stdout, stderr, status, latency, err := ExecuteCode(language, code, tc.Input)
 		if err != nil {
-			// Treat judge submission failures as TLE for verdict purposes.
+			// API execution error or system timeout
 			results = append(results, TestExecutionResult{
 				TestcaseID: tc.ID,
-				Status:     "time_limit_exceeded",
-				Stdout:     "",
+				Status:     "runtime_error", // Mapped generically in Piston logic
+				Stdout:     stderr,
 				Expected:   tc.ExpectedOutput,
 				Matches:    false,
-				RuntimeMS:  0,
+				RuntimeMS:  latency,
 			})
-			overallVerdict = "TLE"
+			overallVerdict = "RE"
+			if latency > maxRuntimeMS { maxRuntimeMS = latency }
 			continue
 		}
 
-		pollResult, err := judge.PollSubmissionResult(result.Token, 30, time.Second*2)
-		if err != nil || pollResult == nil || pollResult.Status == nil {
-			results = append(results, TestExecutionResult{
-				TestcaseID: tc.ID,
-				Status:     "time_limit_exceeded",
-				Stdout:     "",
-				Expected:   tc.ExpectedOutput,
-				Matches:    false,
-				RuntimeMS:  0,
-			})
-			overallVerdict = "TLE"
-			continue
+		if latency > maxRuntimeMS {
+			maxRuntimeMS = latency
 		}
 
-		internalStatus := judge.MapJudge0StatusToInternal(pollResult.Status.ID)
-
-		// Parse runtime (Judge0 returns time in seconds as a string like "0.001")
-		execRuntimeMS := 0
-		if pollResult.Time != "" {
-			var runtimeSeconds float64
-			if _, err := fmt.Sscanf(pollResult.Time, "%f", &runtimeSeconds); err == nil {
-				execRuntimeMS = int(runtimeSeconds * 1000)
-			}
-		}
-		if execRuntimeMS > runtimeMS {
-			runtimeMS = execRuntimeMS
-		}
-
-		output := trimWhitespace(pollResult.Stdout)
+		output := trimWhitespace(stdout)
 		expected := trimWhitespace(tc.ExpectedOutput)
 		matches := false
-		finalStatus := internalStatus
+		finalStatus := status
 
-		if internalStatus == "accepted" {
+		if status != "runtime_error" {
 			matches = output == expected
-			if !matches {
+			if matches {
+				finalStatus = "accepted"
+			} else {
 				finalStatus = "wrong_answer"
 			}
 		}
 
-		// Decide per-sample verdict contribution
-		if finalStatus == "wrong_answer" && overallVerdict != "TLE" {
+		// Verdict priority RE > WA > AC
+		if finalStatus == "wrong_answer" && overallVerdict != "RE" {
 			overallVerdict = "WA"
-		}
-		if finalStatus == "time_limit_exceeded" {
-			overallVerdict = "TLE"
+		} else if finalStatus == "runtime_error" {
+			overallVerdict = "RE"
 		}
 
 		results = append(results, TestExecutionResult{
 			TestcaseID: tc.ID,
 			Status:     finalStatus,
-			Stdout:     pollResult.Stdout,
+			Stdout:     stdout,
 			Expected:   tc.ExpectedOutput,
 			Matches:    matches,
-			RuntimeMS:  execRuntimeMS,
+			RuntimeMS:  latency,
 		})
 	}
 
 	return &RunResult{
 		Success:     true,
 		Verdict:     overallVerdict,
-		RuntimeMS:   runtimeMS,
+		RuntimeMS:   maxRuntimeMS,
 		TestResults: results,
 		SampleCount: len(testcases),
 	}, nil
 }
-

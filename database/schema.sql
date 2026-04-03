@@ -51,7 +51,6 @@ CREATE TABLE IF NOT EXISTS submissions (
     status VARCHAR(50) DEFAULT 'pending', -- pending, running, accepted, wrong_answer, time_limit_exceeded, runtime_error, compilation_error
     score INTEGER DEFAULT 0,
     runtime INTEGER DEFAULT 0, -- milliseconds
-    judge0_token VARCHAR(255), -- Judge0 submission token
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

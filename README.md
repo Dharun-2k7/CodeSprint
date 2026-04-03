@@ -14,75 +14,37 @@ This is the complete, production-ready version of Codesprint with all critical i
 
 ## 🚀 Quick Start
 
-### Option 1: Docker Compose (Recommended for Local Development)
+### Local Setup
 
 ```bash
 # 1. Clone/extract this project
 cd codesprint-fixed
 
-# 2. Start all services
-docker-compose up -d
-
-# 3. Wait for services to initialize (~30 seconds)
-# Judge0 is called via RapidAPI (no local Judge0 container). Ensure `RAPIDAPI_KEY` is set.
-
-# 4. Run database migrations
-docker exec -it codesprint_db psql -U codesprint -d codesprint -f /docker-entrypoint-initdb.d/schema.sql
-
-# Or connect manually:
-docker exec -it codesprint_db psql -U codesprint -d codesprint
-```
-
-### Option 2: Local Development
-
-```bash
-# 1. Start databases
-docker-compose up -d postgres
-
-# 2. Install dependencies
-go mod download
+# 2. Setup your external Postgres Database 
 
 # 3. Create .env file
-cat > .env << EOF
-DB_HOST=localhost
-DB_PORT=5432
-DB_USER=codesprint
-DB_PASSWORD=codesprint123
-DB_NAME=codesprint
-JWT_SECRET=$(openssl rand -hex 32)
-JUDGE0_URL=https://judge0-ce.p.rapidapi.com
-RAPIDAPI_KEY=your_rapidapi_key_here
-PORT=8080
-EOF
+cp .env.example .env
 
-# 4. Run the application
-go run main.go
+# Edit .env with your DB_URL and RAPIDAPI_KEY:
+nano .env
+
+# 4. Run the setup and migrations using a connected psql client
+psql \$DB_URL -f database/schema.sql
+psql \$DB_URL -f database/migrations.sql
+
+# 5. Build and run
+go mod tidy
+go build -o main
+./main
 ```
 
 ---
 
 ## 🔧 Critical Post-Setup Steps
 
-### 1. Run Database Migrations
+### Make Yourself Admin
 
-```bash
-# Connect to database
-docker exec -it codesprint_db psql -U codesprint -d codesprint
-
-# Inside psql, run:
-\i database/schema.sql
-\i database/migrations.sql
-\q
-```
-
-### 2. Make Yourself Admin
-
-**IMPORTANT**: After creating your first user account, make yourself admin:
-
-```bash
-# Connect to database
-docker exec -it codesprint_db psql -U codesprint -d codesprint
-```
+**IMPORTANT**: After creating your first user account, make yourself admin via psql or your remote database dashboard:
 
 ```sql
 -- Replace with your actual email
@@ -92,9 +54,6 @@ WHERE email = 'your@email.com';
 
 -- Verify it worked
 SELECT id, email, is_admin, is_main_manager FROM users;
-
--- Exit
-\q
 ```
 
 ---
@@ -301,28 +260,14 @@ curl http://localhost:8080/api/submission/1
 
 ### Judge0 Not Responding
 ```bash
-# Check if running
-docker ps | grep judge0
-
-# Check logs
-docker logs codesprint_judge0
-
 # Judge0 is called via RapidAPI (from the backend). No local Judge0 container is needed.
-
-# Restart if needed
-docker compose restart backend
+# Verify your api key layout and url bindings inside process ENV.
 ```
 
 ### Database Connection Failed
 ```bash
-# Check PostgreSQL is running
-docker ps | grep postgres
-
-# Check logs
-docker logs codesprint_db
-
-# Test connection
-docker exec -it codesprint_db psql -U codesprint -d codesprint -c "SELECT 1;"
+# Test connection inside psql or an external tool using DB_URL
+psql $DB_URL -c "SELECT 1;"
 ```
 
 ### Admin Button Not Showing
@@ -396,9 +341,8 @@ Before deploying to production:
 
 If you encounter issues:
 1. Check the troubleshooting section above
-2. Review Docker logs: `docker-compose logs`
-3. Check database logs: `docker logs codesprint_db`
-4. Verify environment variables are set correctly
+2. Review app logs directly
+3. Verify environment variables are set correctly
 
 ---
 

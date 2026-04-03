@@ -62,7 +62,6 @@ type Submission struct {
 	Status      string    `json:"status" db:"status"`
 	Score       int       `json:"score" db:"score"`
 	Runtime     int       `json:"runtime" db:"runtime"` // milliseconds
-	Judge0Token string    `json:"judge0_token" db:"judge0_token"`
 	CreatedAt   time.Time `json:"created_at" db:"created_at"`
 }
 

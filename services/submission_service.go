@@ -2,7 +2,6 @@ package services
 
 import (
 	"codesprint/database"
-	"codesprint/judge"
 	"codesprint/models"
 	"fmt"
 	"time"
@@ -10,7 +9,7 @@ import (
 
 type SubmissionTestResult struct {
 	TestcaseID int    `json:"testcase_id"`
-	Status     string `json:"status"` // accepted / wrong_answer / time_limit_exceeded
+	Status     string `json:"status"` // accepted / wrong_answer / runtime_error
 	Stdout     string `json:"stdout"`
 	Expected   string `json:"expected"`
 	Matches    bool   `json:"matches"`
@@ -18,17 +17,16 @@ type SubmissionTestResult struct {
 }
 
 type SubmitResult struct {
-	Success     bool                    `json:"success"`
-	SubmissionID int                   `json:"submission_id"`
-	Verdict     string                 `json:"verdict"` // AC / WA / TLE
-	Score       int                    `json:"score"`
-	RuntimeMS   int                    `json:"runtime_ms"`
-	TestResults []SubmissionTestResult `json:"test_results"`
+	Success      bool                   `json:"success"`
+	SubmissionID int                    `json:"submission_id"`
+	Verdict      string                 `json:"verdict"` // AC / WA / RE
+	Score        int                    `json:"score"`
+	RuntimeMS    int                    `json:"runtime_ms"`
+	TestResults  []SubmissionTestResult `json:"test_results"`
 }
 
-// SubmitAndJudge runs against all testcases for a problem, stores final results in DB, and returns verdict synchronously.
+// SubmitAndJudge runs against all testcases explicitly using synchronous piston endpoints.
 func SubmitAndJudge(userID, problemID, contestID int, language, code string) (*SubmitResult, error) {
-	// Fetch all testcases
 	rows, err := database.DB.Query(
 		"SELECT id, input, expected_output FROM testcases WHERE problem_id = $1 ORDER BY id",
 		problemID,
@@ -51,7 +49,6 @@ func SubmitAndJudge(userID, problemID, contestID int, language, code string) (*S
 		return nil, fmt.Errorf("no testcases found for this problem")
 	}
 
-	// Create submission record
 	var submissionID int
 	err = database.DB.QueryRow(
 		"INSERT INTO submissions (user_id, problem_id, contest_id, language, code, status) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
@@ -61,87 +58,50 @@ func SubmitAndJudge(userID, problemID, contestID int, language, code string) (*S
 		return nil, fmt.Errorf("failed to create submission: %w", err)
 	}
 
-	languageID := judge.GetLanguageID(language)
-
 	overallVerdict := "AC"
-	runtimeMS := 0
+	maxRuntimeMS := 0
 	allPassed := true
-	// Canonical DB status to set on submissions row.
 	finalDBStatus := "accepted"
 
 	results := make([]SubmissionTestResult, 0, len(testcases))
 
 	for _, tc := range testcases {
-		result, err := judge.SubmitCode(code, languageID, tc.Input)
-		if err != nil {
-			// Treat judge submission failures as TLE.
+		stdout, stderr, status, latency, err := ExecuteCode(language, code, tc.Input)
+
+		if latency > maxRuntimeMS {
+			maxRuntimeMS = latency
+		}
+
+		if err != nil || status == "runtime_error" {
 			results = append(results, SubmissionTestResult{
 				TestcaseID: tc.ID,
-				Status:     "time_limit_exceeded",
-				Stdout:     "",
+				Status:     "runtime_error",
+				Stdout:     stderr,
 				Expected:   tc.ExpectedOutput,
 				Matches:    false,
-				RuntimeMS:  0,
+				RuntimeMS:  latency,
 			})
 			allPassed = false
-			overallVerdict = "TLE"
-			finalDBStatus = "time_limit_exceeded"
+			overallVerdict = "RE"
+			finalDBStatus = "runtime_error"
 			continue
 		}
 
-		pollResult, err := judge.PollSubmissionResult(result.Token, 30, time.Second*2)
-		if err != nil || pollResult == nil || pollResult.Status == nil {
-			results = append(results, SubmissionTestResult{
-				TestcaseID: tc.ID,
-				Status:     "time_limit_exceeded",
-				Stdout:     "",
-				Expected:   tc.ExpectedOutput,
-				Matches:    false,
-				RuntimeMS:  0,
-			})
-			allPassed = false
-			overallVerdict = "TLE"
-			finalDBStatus = "time_limit_exceeded"
-			continue
-		}
-
-		internalStatus := judge.MapJudge0StatusToInternal(pollResult.Status.ID)
-
-		// Parse runtime (Judge0 returns time in seconds as string)
-		execRuntimeMS := 0
-		if pollResult.Time != "" {
-			var runtimeSeconds float64
-			if _, err := fmt.Sscanf(pollResult.Time, "%f", &runtimeSeconds); err == nil {
-				execRuntimeMS = int(runtimeSeconds * 1000)
-			}
-		}
-		if execRuntimeMS > runtimeMS {
-			runtimeMS = execRuntimeMS
-		}
-
-		output := trimWhitespace(pollResult.Stdout)
+		output := trimWhitespace(stdout)
 		expected := trimWhitespace(tc.ExpectedOutput)
 
 		matches := false
-		finalStatusForThisTC := internalStatus
-		if internalStatus == "accepted" {
-			matches = output == expected
-			if !matches {
-				finalStatusForThisTC = "wrong_answer"
-			}
-		} else {
-			// Anything non-accepted becomes non-passing.
-			matches = false
+		finalStatusForThisTC := "accepted"
+		
+		matches = output == expected
+		if !matches {
+			finalStatusForThisTC = "wrong_answer"
 		}
 
-		// Verdict aggregation with priority: TLE > WA > AC.
-		if finalStatusForThisTC == "wrong_answer" && overallVerdict != "TLE" {
+		// Verdict Prioritisation RE > WA > AC.
+		if finalStatusForThisTC == "wrong_answer" && overallVerdict != "RE" {
 			overallVerdict = "WA"
-		}
-		if finalStatusForThisTC == "time_limit_exceeded" || finalStatusForThisTC == "compilation_error" || finalStatusForThisTC == "runtime_error" || finalStatusForThisTC == "memory_limit_exceeded" {
-			overallVerdict = "TLE"
-			finalDBStatus = "time_limit_exceeded"
-			allPassed = false
+            finalDBStatus  = "wrong_answer"
 		}
 		if finalStatusForThisTC != "accepted" {
 			allPassed = false
@@ -150,22 +110,15 @@ func SubmitAndJudge(userID, problemID, contestID int, language, code string) (*S
 		results = append(results, SubmissionTestResult{
 			TestcaseID: tc.ID,
 			Status:     finalStatusForThisTC,
-			Stdout:     pollResult.Stdout,
+			Stdout:     stdout,
 			Expected:   tc.ExpectedOutput,
 			Matches:    matches,
-			RuntimeMS:  execRuntimeMS,
+			RuntimeMS:  latency,
 		})
-
-		// Update last seen token for debugging (best effort).
-		_, _ = database.DB.Exec("UPDATE submissions SET judge0_token = $1 WHERE id = $2", result.Token, submissionID)
 	}
 
 	if allPassed && overallVerdict == "AC" {
 		finalDBStatus = "accepted"
-	} else if overallVerdict == "WA" {
-		finalDBStatus = "wrong_answer"
-	} else {
-		finalDBStatus = "time_limit_exceeded"
 	}
 
 	score := 0
@@ -175,13 +128,12 @@ func SubmitAndJudge(userID, problemID, contestID int, language, code string) (*S
 
 	_, err = database.DB.Exec(
 		"UPDATE submissions SET status = $1, score = $2, runtime = $3 WHERE id = $4",
-		finalDBStatus, score, runtimeMS, submissionID,
+		finalDBStatus, score, maxRuntimeMS, submissionID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update submission: %w", err)
 	}
 
-	// Update leaderboard cache
 	updateLeaderboardCache(submissionID)
 
 	return &SubmitResult{
@@ -189,7 +141,7 @@ func SubmitAndJudge(userID, problemID, contestID int, language, code string) (*S
 		SubmissionID: submissionID,
 		Verdict:      overallVerdict,
 		Score:        score,
-		RuntimeMS:    runtimeMS,
+		RuntimeMS:    maxRuntimeMS,
 		TestResults:  results,
 	}, nil
 }
@@ -204,12 +156,10 @@ func updateLeaderboardCache(submissionID int) {
 		return
 	}
 
-	// Only count accepted submissions
 	if submission.Status != "accepted" {
 		return
 	}
 
-	// Check if this is the first accepted submission for this problem
 	var existingCount int
 	err = database.DB.QueryRow(
 		"SELECT COUNT(*) FROM submissions WHERE user_id = $1 AND contest_id = $2 AND problem_id = $3 AND status = 'accepted'",
@@ -219,7 +169,6 @@ func updateLeaderboardCache(submissionID int) {
 		return
 	}
 
-	// Get current leaderboard entry
 	var solvedCount, penalty int
 	var lastSubmissionTime time.Time
 	err = database.DB.QueryRow(
@@ -251,4 +200,3 @@ func getContestStartTime(contestID int) (time.Time, error) {
 	).Scan(&startTime)
 	return startTime, err
 }
-

@@ -2,12 +2,10 @@ package handlers
 
 import (
 	"codesprint/database"
-	"codesprint/judge"
 	"codesprint/models"
 	"codesprint/services"
 	"codesprint/utils"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -113,121 +111,6 @@ func SubmitCode(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(subRes)
 }
 
-// processSubmission processes a submission against all testcases
-func processSubmission(submissionID int, code, language string, testcases []models.Testcase, timeLimit int) {
-	languageID := judge.GetLanguageID(language)
-	allPassed := true
-	totalRuntime := 0
-	finalStatus := "accepted"
-
-	// Process each testcase
-	for _, tc := range testcases {
-		// Submit to Judge0
-		result, err := judge.SubmitCode(code, languageID, tc.Input)
-		if err != nil {
-			fmt.Printf("submission %d: SubmitCode error: %v\n", submissionID, err)
-			finalStatus = "runtime_error"
-			allPassed = false
-			break
-		}
-
-		fmt.Printf("submission %d: submitted to Judge0 token=%s\n", submissionID, result.Token)
-
-		// Poll for result
-		pollResult, err := judge.PollSubmissionResult(result.Token, 30, time.Second*2)
-		if err != nil {
-			fmt.Printf("submission %d: PollSubmissionResult error: %v\n", submissionID, err)
-			finalStatus = "runtime_error"
-			allPassed = false
-			break
-		}
-
-		if pollResult == nil || pollResult.Status == nil {
-			fmt.Printf("submission %d: token=%s pollResult is nil or has no status\n", submissionID, result.Token)
-			finalStatus = "runtime_error"
-			allPassed = false
-			break
-		}
-
-		fmt.Printf("submission %d: token=%s status=%d (%s)\n", submissionID, result.Token, pollResult.Status.ID, pollResult.Status.Description)
-
-		// Parse runtime
-		if pollResult.Time != "" {
-			// Judge0 returns time as "0.001" (seconds), convert to milliseconds
-			var runtimeSeconds float64
-			fmt.Sscanf(pollResult.Time, "%f", &runtimeSeconds)
-			runtimeMs := int(runtimeSeconds * 1000)
-			if runtimeMs > totalRuntime {
-				totalRuntime = runtimeMs
-			}
-		}
-
-		// Check result status
-		status := judge.MapJudge0StatusToInternal(pollResult.Status.ID)
-
-		// Check if output matches (only if Judge0 says accepted)
-		if pollResult.Status.ID == 3 { // Judge0 accepted status
-			// Trim whitespace for comparison
-			output := trimWhitespace(pollResult.Stdout)
-			expected := trimWhitespace(tc.ExpectedOutput)
-			if output != expected {
-				status = "wrong_answer"
-			}
-		}
-
-		if status != "accepted" {
-			finalStatus = status
-			allPassed = false
-			break
-		}
-	}
-
-	// Calculate score
-	score := 0
-	if allPassed {
-		score = 100
-	}
-
-	// Update submission
-	_, err := database.DB.Exec(
-		"UPDATE submissions SET status = $1, score = $2, runtime = $3 WHERE id = $4",
-		finalStatus, score, totalRuntime, submissionID,
-	)
-	if err != nil {
-		fmt.Printf("Failed to update submission %d: %v\n", submissionID, err)
-	}
-
-	// Update leaderboard cache
-	updateLeaderboardCache(submissionID)
-}
-
-func trimWhitespace(s string) string {
-	// Trim leading and trailing whitespace, normalize line endings
-	lines := []string{}
-	currentLine := ""
-	for _, char := range s {
-		if char == '\n' || char == '\r' {
-			if len(currentLine) > 0 {
-				lines = append(lines, currentLine)
-				currentLine = ""
-			}
-		} else {
-			currentLine += string(char)
-		}
-	}
-	if len(currentLine) > 0 {
-		lines = append(lines, currentLine)
-	}
-	// Join lines with newline
-	result := ""
-	for i, line := range lines {
-		if i > 0 {
-			result += "\n"
-		}
-		result += line
-	}
-	return result
-}
 
 // GetSubmission returns a submission by ID
 func GetSubmission(w http.ResponseWriter, r *http.Request) {

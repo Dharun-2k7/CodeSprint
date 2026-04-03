@@ -25,6 +25,9 @@ func main() {
 	}
 	defer database.CloseDB()
 
+	// Initialize optional Redis cache
+	database.InitRedis()
+
 	// Router
 	r := mux.NewRouter()
 
